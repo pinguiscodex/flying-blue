@@ -48,27 +48,37 @@ class RelayServer:
                     )
                     continue
 
-                if self.clients.get(connection) != "sender":
-                    await connection.send(
-                        Message(type="error", data={"message": "Sender registration required"}).encode()
+                sender_role = self.clients.get(connection)
+                if sender_role == "sender":
+                    receivers = [
+                        client
+                        for client, role in self.clients.items()
+                        if role == "receiver"
+                    ]
+                    await asyncio.gather(
+                        *(receiver.send(message.encode()) for receiver in receivers),
+                        return_exceptions=True,
                     )
-                    continue
-
-                receivers = [
-                    receiver
-                    for receiver, role in self.clients.items()
-                    if role == "receiver"
-                ]
-                await asyncio.gather(
-                    *(receiver.send(message.encode()) for receiver in receivers),
-                    return_exceptions=True,
-                )
-                await connection.send(
-                    Message(
-                        type="ack",
-                        data={"received_type": message.type, "receivers": len(receivers)},
-                    ).encode()
-                )
+                    await connection.send(
+                        Message(
+                            type="ack",
+                            data={"received_type": message.type, "receivers": len(receivers)},
+                        ).encode()
+                    )
+                elif sender_role == "receiver":
+                    targets = [
+                        client
+                        for client, role in self.clients.items()
+                        if role == "sender"
+                    ]
+                    await asyncio.gather(
+                        *(target.send(message.encode()) for target in targets),
+                        return_exceptions=True,
+                    )
+                else:
+                    await connection.send(
+                        Message(type="error", data={"message": "Registration required"}).encode()
+                    )
         except websockets.ConnectionClosed:
             logger.info("Client disconnected: %s", client)
         finally:

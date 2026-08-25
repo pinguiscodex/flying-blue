@@ -43,6 +43,10 @@ Für reproduzierbare One-Folder-Builds:
 ```bash
 pyinstaller --clean build/sender.spec
 pyinstaller --clean build/receiver.spec
+pyinstaller --clean build/server.spec
 ```
 
-Die Artefakte werden in `dist/Sender/` und `dist/Receiver/` erzeugt.
+Die Artefakte werden als Linux-Executables in `dist/Sender`, `dist/Receiver`
+und `dist/Server` erzeugt.
+Alle drei Executables werden ohne Terminalfenster gestartet und können dadurch
+im Hintergrund laufen.

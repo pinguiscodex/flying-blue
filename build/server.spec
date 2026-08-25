@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_submodules
 hiddenimports = collect_submodules("websockets")
 
 a = Analysis(
-    ["../src/sender.py"],
+    ["../src/server.py"],
     pathex=["../src"],
     binaries=[],
     datas=[],
@@ -23,7 +23,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="Sender",
+    name="Server",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

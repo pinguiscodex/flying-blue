@@ -6,8 +6,8 @@ import pytest
 import flying_blue
 from flying_blue.__main__ import main as package_main
 from flying_blue.common.protocol import Message
-from flying_blue.receiver.main import receive_information
-from flying_blue.sender.main import send_information
+from flying_blue.receiver.main import receive_commands, execute_command
+from flying_blue.sender.main import send_command
 from flying_blue.server.main import RelayServer
 
 
@@ -89,10 +89,10 @@ def test_server_rejects_invalid_registration_role():
     asyncio.run(scenario())
 
 
-def test_server_relay_data_to_registered_receivers():
+def test_server_relay_command_from_sender_to_receivers():
     async def scenario():
         server = RelayServer()
-        sender = FakeConnection([Message(type="information", data={"message": "hello"}).encode()])
+        sender = FakeConnection([Message(type="command", data={"command": "ls"}).encode()])
         receiver = FakeConnection()
 
         server.clients[sender] = "sender"
@@ -101,18 +101,52 @@ def test_server_relay_data_to_registered_receivers():
         await server.handle_client(sender)
 
         assert len(receiver.sent) == 1
-        assert Message.decode(receiver.sent[0]).data == {"message": "hello"}
+        assert Message.decode(receiver.sent[0]).type == "command"
+        assert Message.decode(receiver.sent[0]).data == {"command": "ls"}
         assert Message.decode(sender.sent[0]).type == "ack"
         assert Message.decode(sender.sent[0]).data["receivers"] == 1
 
     asyncio.run(scenario())
 
 
-def test_sender_function_registers_and_submits_message(monkeypatch):
+def test_server_relay_result_from_receiver_to_senders():
+    async def scenario():
+        server = RelayServer()
+        receiver = FakeConnection([
+            Message(type="result", data={"command": "ls", "output": "file1\n", "exit_code": 0}).encode()
+        ])
+        sender = FakeConnection()
+
+        server.clients[receiver] = "receiver"
+        server.clients[sender] = "sender"
+
+        await server.handle_client(receiver)
+
+        assert len(sender.sent) == 1
+        decoded = Message.decode(sender.sent[0])
+        assert decoded.type == "result"
+        assert decoded.data["command"] == "ls"
+        assert decoded.data["exit_code"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_execute_command_runs_shell_command():
+    result = execute_command("echo hello")
+    assert result["exit_code"] == 0
+    assert "hello" in result["output"]
+
+
+def test_execute_command_returns_error_on_failure():
+    result = execute_command("exit 1")
+    assert result["exit_code"] == 1
+
+
+def test_sender_function_registers_and_sends_command(monkeypatch):
     async def scenario():
         websocket = FakeWebSocket([
             Message(type="registered", data={"role": "sender"}).encode(),
-            Message(type="ack", data={"received_type": "information", "receivers": 0}).encode(),
+            Message(type="result", data={"command": "ls", "output": "file1\n", "exit_code": 0}).encode(),
         ])
 
         def fake_connect(uri):
@@ -120,20 +154,21 @@ def test_sender_function_registers_and_submits_message(monkeypatch):
             return websocket
 
         monkeypatch.setattr("flying_blue.sender.main.connect", fake_connect)
-        await send_information("example.com", 9000)
+        await send_command("example.com", 9000, "ls")
 
         assert websocket.sent[0] == Message(type="register", data={"role": "sender"}).encode()
-        assert websocket.sent[1][0] == "{"  # payload was sent as a JSON-encoded message
-        assert Message.decode(websocket.sent[1]).type == "information"
+        decoded = Message.decode(websocket.sent[1])
+        assert decoded.type == "command"
+        assert decoded.data == {"command": "ls"}
 
     asyncio.run(scenario())
 
 
-def test_receiver_function_receives_messages(monkeypatch):
+def test_receiver_function_receives_commands(monkeypatch):
     async def scenario():
         websocket = FakeWebSocket([
             Message(type="registered", data={"role": "receiver"}).encode(),
-            Message(type="information", data={"message": "hello"}).encode(),
+            Message(type="command", data={"command": "echo test"}).encode(),
         ])
 
         def fake_connect(uri):
@@ -141,10 +176,13 @@ def test_receiver_function_receives_messages(monkeypatch):
             return websocket
 
         monkeypatch.setattr("flying_blue.receiver.main.connect", fake_connect)
-        await receive_information("example.com", 9000)
+        await receive_commands("example.com", 9000)
 
-        assert websocket.sent == [
-            Message(type="register", data={"role": "receiver"}).encode()
-        ]
+        assert websocket.sent[0] == Message(type="register", data={"role": "receiver"}).encode()
+        result_msg = Message.decode(websocket.sent[1])
+        assert result_msg.type == "result"
+        assert result_msg.data["command"] == "echo test"
+        assert result_msg.data["exit_code"] == 0
+        assert "test" in result_msg.data["output"]
 
     asyncio.run(scenario())
